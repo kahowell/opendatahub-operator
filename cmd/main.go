@@ -18,10 +18,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
+	"slices"
 
 	ocappsv1 "github.com/openshift/api/apps/v1" //nolint:importas //reason: conflicts with appsv1 "k8s.io/api/apps/v1"
 	buildv1 "github.com/openshift/api/build/v1"
@@ -37,6 +40,8 @@ import (
 	ofapiv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	ofapiv2 "github.com/operator-framework/api/pkg/operators/v2"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"github.com/prometheus/client_golang/prometheus"
+	"gopkg.in/yaml.v3"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -47,18 +52,22 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/watch"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
+	crMetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 	componentApi "github.com/opendatahub-io/opendatahub-operator/v2/api/components/v1alpha1"
@@ -232,7 +241,9 @@ func main() { //nolint:funlen,maintidx
 				Namespaces: secretCache,
 			},
 			// it is hard to find a label can be used for both trustCAbundle configmap and inferenceservice-config and deletionCM
-			&corev1.ConfigMap{}: {},
+			&corev1.ConfigMap{}: {
+				Transform: stripConfigMapDetails,
+			},
 			// TODO: we can limit scope of namespace if we find a way to only get list of DSProject
 			// also need for monitoring, trustcabundle
 			&corev1.Namespace{}: {},
@@ -281,18 +292,9 @@ func main() { //nolint:funlen,maintidx
 		},
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{ // single pod does not need to have LeaderElection
-		Scheme:  scheme,
-		Metrics: ctrlmetrics.Options{BindAddress: metricsAddr},
-		WebhookServer: ctrlwebhook.NewServer(ctrlwebhook.Options{
-			Port: 9443,
-			// TLSOpts: , // TODO: it was not set in the old code
-		}),
-		PprofBindAddress:       pprofAddr,
-		HealthProbeBindAddress: probeAddr,
-		Cache:                  cacheOptions,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "07ed84f7.opendatahub.io",
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme: scheme,
+		Cache:  cacheOptions,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -304,6 +306,8 @@ func main() { //nolint:funlen,maintidx
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
+		NewClient: newInstrumentedClient,
+		NewCache:  newInstrumentedCache,
 		Client: client.Options{
 			Cache: &client.CacheOptions{
 				DisableFor: []client.Object{
@@ -430,6 +434,208 @@ func main() { //nolint:funlen,maintidx
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func stripConfigMapDetails(i interface{}) (interface{}, error) {
+	return i, nil
+}
+
+type CacheTracker struct {
+	informers []cache.Informer
+}
+
+var cacheTracker = CacheTracker{
+	informers: []cache.Informer{},
+}
+
+type DelegatingCache struct {
+	cache cache.Cache
+}
+
+func (d DelegatingCache) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	return d.cache.Get(ctx, key, obj, opts...)
+}
+
+func (d DelegatingCache) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	return d.cache.List(ctx, list, opts...)
+}
+
+func (d DelegatingCache) GetInformer(ctx context.Context, obj client.Object, opts ...cache.InformerGetOption) (cache.Informer, error) {
+	i, err := d.cache.GetInformer(ctx, obj, opts...)
+	if err == nil && !slices.Contains(cacheTracker.informers, i) {
+		cacheTracker.informers = append(cacheTracker.informers, i)
+		_, err = i.AddEventHandler(recordSizeHandler)
+		if err != nil {
+			setupLog.Error(err, "unable to set up event handler")
+		}
+	}
+	return i, err
+}
+
+func (d DelegatingCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...cache.InformerGetOption) (cache.Informer, error) {
+	//return d.cache.GetInformerForKind(ctx, gvk, opts...)
+	i, err := d.cache.GetInformerForKind(ctx, gvk, opts...)
+	if err == nil && !slices.Contains(cacheTracker.informers, i) {
+		cacheTracker.informers = append(cacheTracker.informers, i)
+		_, err = i.AddEventHandler(recordSizeHandler)
+		if err != nil {
+			setupLog.Error(err, "unable to set up event handler")
+		}
+	}
+	return i, err
+}
+
+type RecordSizeHandler struct {
+}
+
+func (r RecordSizeHandler) OnAdd(obj interface{}, isInInitialList bool) {
+	o, isObj := obj.(runtime.Object)
+	if isObj {
+		gvk, err := apiutil.GVKForObject(o, scheme)
+		if err == nil {
+			b, err := json.Marshal(o)
+			if gvk.Kind == "CustomResourceDefinition" {
+				name, _ := meta.NewAccessor().Name(o)
+				setupLog.Info("Adding CRD ", "name", name, "size", len(b))
+				//file, _ := os.Create(fmt.Sprintf("/tmp/testy/%s.yaml", name))
+				os.WriteFile(fmt.Sprintf("/tmp/testy/%s.json", name), b, fs.FileMode(0644))
+			}
+			if err == nil {
+				metrics.informerBytes.WithLabelValues(gvk.Kind).Add(float64(len(b)))
+			}
+			metrics.informerCacheSize.WithLabelValues(gvk.Kind).Inc()
+		}
+	}
+}
+
+func (r RecordSizeHandler) OnUpdate(oldObj, newObj interface{}) {
+	r.OnAdd(newObj, false)
+	r.OnDelete(oldObj)
+}
+
+func (r RecordSizeHandler) OnDelete(obj interface{}) {
+	o, isObj := obj.(runtime.Object)
+	if isObj {
+		gvk, err := apiutil.GVKForObject(o, scheme)
+		if err == nil {
+			b, err := yaml.Marshal(o)
+			if err == nil {
+				metrics.informerBytes.WithLabelValues(gvk.Kind).Sub(float64(len(b)))
+			}
+			metrics.informerCacheSize.WithLabelValues(gvk.Kind).Dec()
+		}
+	}
+}
+
+var recordSizeHandler = RecordSizeHandler{}
+
+func (d DelegatingCache) RemoveInformer(ctx context.Context, obj client.Object) error {
+	return d.cache.RemoveInformer(ctx, obj)
+}
+
+func (d DelegatingCache) Start(ctx context.Context) error {
+	return d.cache.Start(ctx)
+}
+
+func (d DelegatingCache) WaitForCacheSync(ctx context.Context) bool {
+	return d.cache.WaitForCacheSync(ctx)
+}
+
+func (d DelegatingCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return d.cache.IndexField(ctx, obj, field, extractValue)
+}
+
+func newInstrumentedCache(config *rest.Config, opts cache.Options) (cache.Cache, error) {
+	c, err := cache.New(config, opts)
+	return DelegatingCache{cache: c}, err
+}
+
+type Metrics struct {
+	requestsTotal       *prometheus.CounterVec
+	responseCardinality *prometheus.GaugeVec
+	informerCacheSize   *prometheus.GaugeVec
+	informerBytes       *prometheus.GaugeVec
+}
+
+var metrics = Metrics{
+	requestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "operator_client_requests_total",
+	}, []string{"op", "key"}),
+	responseCardinality: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "operator_response_items_total",
+	}, []string{"op", "key"}),
+	informerCacheSize: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "operator_informer_items_total",
+	}, []string{"gvk"}),
+	informerBytes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "operator_informer_estimated_bytes_total",
+	}, []string{"gvk"}),
+}
+
+func newInstrumentedClient(config *rest.Config, options client.Options) (client.Client, error) {
+	crMetrics.Registry.MustRegister(metrics.requestsTotal, metrics.responseCardinality, metrics.informerCacheSize, metrics.informerBytes)
+	c, err := client.NewWithWatch(config, options)
+	if err != nil {
+		return nil, err
+	}
+	funcs := interceptor.Funcs{
+		Get:               get,
+		List:              list,
+		Create:            nil,
+		Delete:            nil,
+		DeleteAllOf:       nil,
+		Update:            nil,
+		Patch:             nil,
+		Watch:             watchWrapped,
+		SubResource:       subResourceWrapped,
+		SubResourceGet:    subResourceGetWrapped,
+		SubResourceCreate: nil,
+		SubResourceUpdate: nil,
+		SubResourcePatch:  nil,
+	}
+	return interceptor.NewClient(c, funcs), nil
+}
+
+func subResourceGetWrapped(ctx context.Context, c client.Client, name string, obj client.Object, resource client.Object, opts ...client.SubResourceGetOption) error {
+	metrics.requestsTotal.WithLabelValues("subget", resource.GetObjectKind().GroupVersionKind().Kind).Inc()
+	return c.SubResource(name).Get(ctx, obj, resource, opts...)
+}
+
+func subResourceWrapped(withWatch client.WithWatch, resource string) client.SubResourceClient {
+	metrics.requestsTotal.WithLabelValues("subresource", resource).Inc()
+	return withWatch.SubResource(resource)
+}
+
+func watchWrapped(ctx context.Context, watch client.WithWatch, obj client.ObjectList, opts ...client.ListOption) (watch.Interface, error) {
+	metrics.requestsTotal.WithLabelValues("watch", obj.GetObjectKind().GroupVersionKind().Kind).Inc()
+	return watch.Watch(ctx, obj, opts...)
+}
+
+func list(ctx context.Context, watch client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+	err := watch.List(ctx, list, opts...)
+	if err == nil {
+		gvk, err := apiutil.GVKForObject(list, scheme)
+		if err == nil {
+			metrics.requestsTotal.WithLabelValues(
+				"list",
+				gvk.Kind,
+			).Inc()
+			//metrics.responseCardinality.WithLabelValues("list", gvk.Kind).Set((float64)(*list.GetRemainingItemCount()))
+		}
+	} else {
+		setupLog.Error(err, "unable to list objects")
+	}
+	return err
+}
+
+func get(ctx context.Context, watch client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	//setupLog.Info("Get request for ", "gvk", obj.GetObjectKind().GroupVersionKind().String(), "key", key.String(), "opts", opts)
+	gvk, err := apiutil.GVKForObject(obj, scheme)
+	if err == nil {
+		metrics.requestsTotal.WithLabelValues("get", gvk.Kind+"/"+key.String()).Inc()
+	}
+	//metrics.responseCardinality.WithLabelValues("get", key.String()).Set(1)
+	return watch.Get(ctx, key, obj, opts...)
 }
 
 func getCommonCache(ctx context.Context, cli client.Client, platform common.Platform) (map[string]cache.Config, error) {
