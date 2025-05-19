@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - project.yaml
+  - operatorgroup.yaml
+  - subscription.yaml
+  - clusterrolebinding.yaml
+  - otelcollector.yaml
+  - metricsgenerator.yaml
+  # NOTE: below is redundant w/ prometheusremotewrite exporter, to illustrate federating metrics from otel collector via servicemonitor
+  - servicemonitor.yaml

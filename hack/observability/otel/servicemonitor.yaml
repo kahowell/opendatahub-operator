@@ -1,0 +1,13 @@
+apiVersion: monitoring.rhobs/v1
+kind: ServiceMonitor
+metadata:
+  namespace: redhat-ods-monitoring
+  name: otel-collector-monitor
+spec:
+  endpoints:
+    - interval: 30s
+      port: "prometheus-odh"
+      scheme: http
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: redhat-ods-monitoring.otel-collector

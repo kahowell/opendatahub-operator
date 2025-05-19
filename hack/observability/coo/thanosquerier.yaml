@@ -1,0 +1,9 @@
+apiVersion: monitoring.rhobs/v1alpha1
+kind: ThanosQuerier
+metadata:
+  namespace: redhat-ods-monitoring
+  name: thanos
+spec:
+  selector:
+    matchLabels:
+      mso: redhat-ods-monitoring

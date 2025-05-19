@@ -1,0 +1,16 @@
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoMonolithic
+metadata:
+  name: tempo
+  namespace: redhat-ods-monitoring
+spec:
+  storage:
+    traces:
+      backend: pv
+      size: 5Gi
+  multitenancy:
+    enabled: true
+    mode: openshift
+    authentication:
+      - tenantName: redhat-ods-monitoring                # TODO inject cluster name prefix
+        tenantId: "1610b0c3-c509-4592-a256-a1871353dbfa" # TODO generate new fresh UUID

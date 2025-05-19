@@ -1,0 +1,65 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-collector
+  namespace: redhat-ods-monitoring
+spec:
+  mode: deployment
+  observability:
+    metrics:
+      enableMetrics: true
+  config:
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: k8s-pods
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_label_monitoring_opendatahub_io_scrape]
+                  action: keep
+                  regex: "true"
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: "true"
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $1:$2
+                  target_label: __address__
+      otlp:
+        protocols:
+          grpc: {}
+          http: {}
+    processors: {}
+    exporters:
+#      otlp:
+#        endpoint: otel-collector-headless.redhat-ods-monitoring.svc:4317
+#        tls:
+#          ca_file: "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"
+      # TODO: ideally we write to both replicas, otherwise, if one restarts, the query API suddenly "drops" a bunch of metrics
+      # (using endpoint lookup on the service)
+      # NOTE: we have to set up thanos querier to query both replicas simultaneously
+      prometheusremotewrite/odh:
+        endpoint: http://prometheus-operated.redhat-ods-monitoring.svc:9090/api/v1/write
+        tls:
+          insecure: true
+      # NOTE: alternatively, we could configure our prometheus to scrape the collector via prometheus exporter:
+      prometheus/odh:
+        endpoint: 0.0.0.0:8889
+    service:
+      pipelines:
+#        traces:
+#          receivers: []
+#          processors: []
+#          exporters: []
+        metrics:
+          receivers: [prometheus]
+          processors: []
+          # NOTE: the other option
+          exporters: [prometheusremotewrite/odh, prometheus/odh]

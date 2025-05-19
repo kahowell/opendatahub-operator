@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-generator
+  labels:
+    app: metrics-generator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metrics-generator
+  template:
+    metadata:
+      name: metrics-generator
+      labels:
+        app: metrics-generator
+        monitoring.opendatahub.io/scrape: "true"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9001"
+    spec:
+      containers:
+        - name: metrics-generator
+          image: quay.io/prometheuscommunity/avalanche
+          args:
+            - --gauge-metric-count=3
+            - --series-count=3
+          imagePullPolicy: IfNotPresent
+      restartPolicy: Always
