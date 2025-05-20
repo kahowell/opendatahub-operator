@@ -9,6 +9,9 @@ spec:
     metrics:
       enableMetrics: true
   config:
+    extensions:
+      bearertokenauth:
+        filename: "/var/run/secrets/kubernetes.io/serviceaccount/token"
     receivers:
       prometheus:
         config:
@@ -52,14 +55,27 @@ spec:
       # NOTE: alternatively, we could configure our prometheus to scrape the collector via prometheus exporter:
       prometheus/odh:
         endpoint: 0.0.0.0:8889
+      otlp/odh-tempo:
+        endpoint: tempo-tempo-gateway.redhat-ods-monitoring.svc:4317
+        tls:
+          ca_file: "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"
+        auth:
+          authenticator: bearertokenauth
+        headers:
+          X-Scope-OrgID: redhat-ods-monitoring   # same as tenant name from tempo CR
+      otlp/3p:
+        endpoint: lgtm:4317
+        tls:
+          insecure: true
     service:
+      extensions: [bearertokenauth]
       pipelines:
-#        traces:
-#          receivers: []
-#          processors: []
-#          exporters: []
+        traces:
+          receivers: [otlp]
+          processors: []
+          exporters: [otlp/odh-tempo, otlp/3p]
         metrics:
           receivers: [prometheus]
           processors: []
           # NOTE: the other option
-          exporters: [prometheusremotewrite/odh, prometheus/odh]
+          exporters: [prometheusremotewrite/odh, prometheus/odh, otlp/3p]

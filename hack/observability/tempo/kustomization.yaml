@@ -4,3 +4,6 @@ resources:
   - project.yaml
   - operatorgroup.yaml
   - subscription.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - tempo.yaml

@@ -14,3 +14,7 @@ spec:
     authentication:
       - tenantName: redhat-ods-monitoring                # TODO inject cluster name prefix
         tenantId: "1610b0c3-c509-4592-a256-a1871353dbfa" # TODO generate new fresh UUID
+  jaegerui:
+    enabled: true
+    route:
+      enabled: true

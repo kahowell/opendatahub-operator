@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lgtm
+  namespace: redhat-ods-monitoring
+  labels:
+    app: lgtm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lgtm
+  template:
+    metadata:
+      name: lgtm
+      labels:
+        app: lgtm
+    spec:
+      containers:
+        - name: lgtm
+          image: docker.io/grafana/otel-lgtm
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - mountPath: /data
+              name: data
+      restartPolicy: Always
+      volumes:
+        - name: data
+          emptyDir: {}
