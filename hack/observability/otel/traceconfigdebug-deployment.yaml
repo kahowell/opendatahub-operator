@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traceconfigdebug
+  labels:
+    app: traceconfigdebug
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traceconfigdebug
+  template:
+    metadata:
+      name: traceconfigdebug
+      labels:
+        app: traceconfigdebug
+      annotations:
+        instrumentation.opentelemetry.io/inject-sdk: "true"
+    spec:
+      containers:
+        - name: debug
+          image: quay.io/fedora/fedora
+          command: [ "bash", "-c" ]
+          args: [ "env | grep -P \"OTEL_(RESOURCE|EXPORTER|TRACES|SERVICE|SAMPLER|PROPAGATORS)\"; sleep infinity" ]
+      restartPolicy: Always

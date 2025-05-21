@@ -21,3 +21,6 @@ Jaeger backed by Tempo is available at a route, use `kubectl get route` to deter
 You can generate a span by port-forwarding OTLP/HTTP above and following directions here:
 
 https://www.honeycomb.io/blog/test-span-opentelemetry-collector
+
+The `traceconfigdebug` deployment simply logs the OTEL-related env vars and sleeps forever. It can be used to see how
+instrumentation provides configuration to components.
