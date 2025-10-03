@@ -288,6 +288,7 @@ rules:
   - feastoperators
   - kserves
   - kueues
+  - langfuses
   - llamastackoperators
   - modelcontrollers
   - modelmeshservings
@@ -308,6 +309,7 @@ rules:
   - components.platform.opendatahub.io
   resources:
   - dashboards/finalizers
+  - langfuses/finalizers
   verbs:
   - create
   - get
@@ -324,6 +326,7 @@ rules:
   - feastoperators/status
   - kserves/status
   - kueues/status
+  - langfuses/status
   - llamastackoperators/status
   - modelcontrollers/status
   - modelmeshservings/status

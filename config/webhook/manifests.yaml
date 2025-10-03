@@ -331,3 +331,23 @@ webhooks:
     - rayjobs
     - rayclusters
   sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-components-platform-opendatahub-io-v1alpha1-langfuse
+  failurePolicy: Fail
+  name: vlangfuse.kb.io
+  rules:
+  - apiGroups:
+    - components.platform.opendatahub.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - langfuses
+  sideEffects: None
