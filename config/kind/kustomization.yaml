@@ -1,0 +1,66 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base configuration from default
+resources:
+- ../default
+- webhook-cert.yaml
+# External OpenShift CRDs required for kind
+- ../crd/external/config.openshift.io_apiservers.yaml
+- ../crd/external/config.openshift.io_authentications.yaml
+- ../crd/external/config.openshift.io_builds.yaml
+- ../crd/external/config.openshift.io_clusteroperators.yaml
+- ../crd/external/config.openshift.io_clusterversions.yaml
+- ../crd/external/config.openshift.io_consoles.yaml
+- ../crd/external/config.openshift.io_dnses.yaml
+- ../crd/external/config.openshift.io_featuregates.yaml
+- ../crd/external/config.openshift.io_imagecontentpolicies.yaml
+- ../crd/external/config.openshift.io_imagedigestmirrorsets.yaml
+- ../crd/external/config.openshift.io_images.yaml
+- ../crd/external/config.openshift.io_imagetagmirrorsets.yaml
+- ../crd/external/config.openshift.io_infrastructures.yaml
+- ../crd/external/config.openshift.io_ingresses.yaml
+- ../crd/external/config.openshift.io_networks.yaml
+- ../crd/external/config.openshift.io_nodes.yaml
+- ../crd/external/config.openshift.io_oauths.yaml
+- ../crd/external/config.openshift.io_operatorhubs.yaml
+- ../crd/external/config.openshift.io_projects.yaml
+- ../crd/external/config.openshift.io_proxies.yaml
+- ../crd/external/config.openshift.io_schedulers.yaml
+- ../crd/external/console.openshift.io_consolelinks.yaml
+- ../crd/external/operator.openshift.io_authentications.yaml
+- ../crd/external/operator.openshift.io_cloudcredentials.yaml
+- ../crd/external/operator.openshift.io_clustercsidrivers.yaml
+- ../crd/external/operator.openshift.io_configs.yaml
+- ../crd/external/operator.openshift.io_consoles.yaml
+- ../crd/external/operator.openshift.io_csisnapshotcontrollers.yaml
+- ../crd/external/operator.openshift.io_dnses.yaml
+- ../crd/external/operator.openshift.io_etcds.yaml
+- ../crd/external/operator.openshift.io_ingresscontrollers.yaml
+- ../crd/external/operator.openshift.io_insightsoperators.yaml
+- ../crd/external/operator.openshift.io_kubeapiservers.yaml
+- ../crd/external/operator.openshift.io_kubecontrollermanagers.yaml
+- ../crd/external/operator.openshift.io_kubeschedulers.yaml
+- ../crd/external/operator.openshift.io_kubestorageversionmigrators.yaml
+- ../crd/external/operator.openshift.io_myoperatorresources.yaml
+- ../crd/external/operator.openshift.io_networks.yaml
+- ../crd/external/operator.openshift.io_openshiftapiservers.yaml
+- ../crd/external/operator.openshift.io_openshiftcontrollermanagers.yaml
+- ../crd/external/operator.openshift.io_servicecas.yaml
+- ../crd/external/operator.openshift.io_servicecatalogapiservers.yaml
+- ../crd/external/operator.openshift.io_servicecatalogcontrollermanagers.yaml
+- ../crd/external/operator.openshift.io_storages.yaml
+- ../crd/external/route.openshift.io_routes.yaml
+- ../crd/external/security.openshift.io_securitycontextconstraints.yaml
+- ../crd/external/template.openshift.io_templates.yaml
+- ../crd/external/user.openshift.io_groups.yaml
+- ../crd/external/user.openshift.io_identities.yaml
+- ../crd/external/user.openshift.io_useridentitymappings.yaml
+- ../crd/external/user.openshift.io_users.yaml
+
+# Kind-specific patches
+patches:
+- path: manager_mock_version_patch.yaml
+  target:
+    kind: Deployment
+    name: controller-manager

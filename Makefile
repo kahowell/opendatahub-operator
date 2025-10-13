@@ -146,6 +146,11 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 	$(CONTROLLER_GEN) rbac:roleName=controller-manager-role crd:ignoreUnexportedFields=true webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 	$(call fetch-external-crds,github.com/openshift/api,route/v1)
 	$(call fetch-external-crds,github.com/openshift/api,user/v1)
+	$(call fetch-external-crds,github.com/openshift/api,config/v1)
+	$(call fetch-external-crds,github.com/openshift/api,operator/v1)
+	$(call fetch-external-crds,github.com/openshift/api,template/v1)
+	$(call fetch-external-crds,github.com/openshift/api,security/v1)
+	$(call fetch-external-crds,github.com/openshift/api,console/v1)
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -484,3 +489,135 @@ mv $(1) $(1)-$(3) ;\
 } ;\
 ln -sf $(1)-$(3) $(1)
 endef
+
+##@ Kind Cluster Management
+
+KIND_CLUSTER_NAME ?= odh-dev
+KIND_K8S_VERSION ?= v1.32.0
+CERT_MANAGER_VERSION ?= v1.16.2
+OLM_VERSION ?= v0.30.0
+PROMETHEUS_OPERATOR_VERSION ?= v0.86.0
+GATEWAY_API_VERSION ?= v1.4.0
+
+.PHONY: kind-create
+kind-create: ## Create a kind cluster for local development
+	@echo "Creating kind cluster '$(KIND_CLUSTER_NAME)'..."
+	@if kind get clusters | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
+		echo "Cluster '$(KIND_CLUSTER_NAME)' already exists"; \
+	else \
+		echo 'kind: Cluster' > /tmp/kind-config.yaml; \
+		echo 'apiVersion: kind.x-k8s.io/v1alpha4' >> /tmp/kind-config.yaml; \
+		echo 'nodes:' >> /tmp/kind-config.yaml; \
+		echo '- role: control-plane' >> /tmp/kind-config.yaml; \
+		kind create cluster --name $(KIND_CLUSTER_NAME) \
+			--image kindest/node:$(KIND_K8S_VERSION) \
+			--config /tmp/kind-config.yaml; \
+		rm -f /tmp/kind-config.yaml; \
+		echo "Cluster '$(KIND_CLUSTER_NAME)' created successfully"; \
+	fi
+	@kubectl cluster-info --context kind-$(KIND_CLUSTER_NAME)
+
+.PHONY: kind-delete
+kind-delete: ## Delete the kind cluster
+	@echo "Deleting kind cluster '$(KIND_CLUSTER_NAME)'..."
+	@if kind get clusters | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
+		kind delete cluster --name $(KIND_CLUSTER_NAME); \
+		echo "Cluster '$(KIND_CLUSTER_NAME)' deleted successfully"; \
+	else \
+		echo "Cluster '$(KIND_CLUSTER_NAME)' does not exist"; \
+	fi
+
+.PHONY: kind-deploy
+kind-deploy: prepare image-push install ## Deploy the operator to the kind cluster
+	@echo "Deploying operator to kind cluster '$(KIND_CLUSTER_NAME)'..."
+	@kubectl config use-context kind-$(KIND_CLUSTER_NAME)
+	@echo "Creating operator namespace '$(OPERATOR_NAMESPACE)' if it doesn't exist..."
+	@kubectl create namespace $(OPERATOR_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "Deploying with kind-specific configuration (includes mock cluster version)..."
+	$(KUSTOMIZE) build --load-restrictor LoadRestrictionsNone config/kind | kubectl apply --namespace $(OPERATOR_NAMESPACE) -f -
+	@echo "Waiting for operator deployment to be ready..."
+	@kubectl wait --for=condition=available --timeout=300s \
+		deployment/opendatahub-operator-controller-manager -n $(OPERATOR_NAMESPACE) || \
+		(echo "Operator deployment failed. Check logs with: kubectl logs -n $(OPERATOR_NAMESPACE) deployment/opendatahub-operator-controller-manager"; exit 1)
+	@echo "Operator deployed successfully"
+
+.PHONY: kind-install-cert-manager
+kind-install-cert-manager: ## Install cert-manager in the kind cluster
+	@echo "Installing cert-manager $(CERT_MANAGER_VERSION)..."
+	@if kubectl get namespace cert-manager >/dev/null 2>&1; then \
+		echo "cert-manager is already installed"; \
+	else \
+		kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml; \
+		echo "Waiting for cert-manager to be ready..."; \
+		kubectl wait --for=condition=available --timeout=300s deployment/cert-manager -n cert-manager; \
+		kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-webhook -n cert-manager; \
+		kubectl wait --for=condition=available --timeout=300s deployment/cert-manager-cainjector -n cert-manager; \
+		echo "cert-manager installed successfully"; \
+	fi
+
+.PHONY: kind-install-olm
+kind-install-olm: ## Install OLM (Operator Lifecycle Manager) in the kind cluster
+	@echo "Installing OLM $(OLM_VERSION)..."
+	@if kubectl get namespace olm >/dev/null 2>&1; then \
+		echo "OLM is already installed"; \
+	else \
+		curl -sL https://github.com/operator-framework/operator-lifecycle-manager/releases/download/$(OLM_VERSION)/install.sh | bash -s $(OLM_VERSION); \
+		echo "Waiting for OLM to be ready..."; \
+		kubectl wait --for=condition=available --timeout=300s deployment/olm-operator -n olm; \
+		kubectl wait --for=condition=available --timeout=300s deployment/catalog-operator -n olm; \
+		echo "OLM installed successfully"; \
+	fi
+
+.PHONY: kind-install-prometheus-operator
+kind-install-prometheus-operator: ## Install Prometheus Operator in the kind cluster
+	@echo "Installing Prometheus Operator $(PROMETHEUS_OPERATOR_VERSION)..."
+	@if kubectl get namespace default >/dev/null 2>&1 && kubectl get deployment -n default prometheus-operator >/dev/null 2>&1; then \
+		echo "Prometheus Operator is already installed"; \
+	else \
+		kubectl apply --server-side -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/refs/tags/$(PROMETHEUS_OPERATOR_VERSION)/bundle.yaml; \
+		echo "Waiting for Prometheus Operator to be ready..."; \
+		kubectl wait --for=condition=available --timeout=300s deployment/prometheus-operator -n default; \
+		echo "Prometheus Operator installed successfully"; \
+	fi
+
+.PHONY: kind-install-gateway-api
+kind-install-gateway-api: ## Install Gateway API CRDs in the kind cluster
+	@echo "Installing Gateway API $(GATEWAY_API_VERSION)..."
+	@if kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1; then \
+		echo "Gateway API is already installed"; \
+	else \
+		kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml; \
+		echo "Gateway API installed successfully"; \
+	fi
+
+.PHONY: kind-setup
+kind-setup: kind-create kind-install-olm kind-install-cert-manager kind-install-prometheus-operator kind-install-gateway-api image kind-deploy ## Complete kind cluster setup: create cluster, install OLM, cert-manager, prometheus-operator, gateway-api, build and push image, and deploy operator
+	@echo "Kind cluster setup complete. You can now run 'make e2e-test'"
+
+.PHONY: kind-status
+kind-status: ## Show status of the kind cluster and operator deployment
+	@echo "=== Kind Cluster Status ==="
+	@if kind get clusters | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
+		echo "Cluster: $(KIND_CLUSTER_NAME) [RUNNING]"; \
+		kubectl cluster-info --context kind-$(KIND_CLUSTER_NAME); \
+		echo ""; \
+		echo "=== Operator Deployment Status ==="; \
+		kubectl get deployment -n $(OPERATOR_NAMESPACE) 2>/dev/null || echo "No deployments found in namespace $(OPERATOR_NAMESPACE)"; \
+		echo ""; \
+		echo "=== Operator Pods ==="; \
+		kubectl get pods -n $(OPERATOR_NAMESPACE) 2>/dev/null || echo "No pods found in namespace $(OPERATOR_NAMESPACE)"; \
+	else \
+		echo "Cluster: $(KIND_CLUSTER_NAME) [NOT FOUND]"; \
+		echo "Run 'make kind-create' to create the cluster"; \
+	fi
+
+.PHONY: kind-logs
+kind-logs: ## Show logs from the operator deployment
+	@echo "=== Operator Logs ==="
+	@kubectl logs -n $(OPERATOR_NAMESPACE) deployment/opendatahub-operator-controller-manager --tail=100 --follow
+
+.PHONY: kind-restart
+kind-restart: ## Restart the operator deployment
+	@echo "Restarting operator deployment..."
+	@kubectl rollout restart deployment/opendatahub-operator-controller-manager -n $(OPERATOR_NAMESPACE)
+	@kubectl rollout status deployment/opendatahub-operator-controller-manager -n $(OPERATOR_NAMESPACE)

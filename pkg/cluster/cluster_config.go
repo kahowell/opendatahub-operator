@@ -115,6 +115,19 @@ func GetDomain(ctx context.Context, c client.Client) (string, error) {
 
 // This is an Openshift specific implementation.
 func getOCPVersion(ctx context.Context, c client.Client) (version.OperatorVersion, error) {
+	log := logf.FromContext(ctx)
+	// Check for mock cluster version (useful for non-OpenShift environments like kind)
+	mockVersion := os.Getenv("MOCK_CLUSTER_VERSION")
+	log.Info("Checking for MOCK_CLUSTER_VERSION", "value", mockVersion)
+	if mockVersion != "" {
+		v, err := semver.ParseTolerant(mockVersion)
+		if err != nil {
+			return version.OperatorVersion{}, fmt.Errorf("unable to parse MOCK_CLUSTER_VERSION %q: %w", mockVersion, err)
+		}
+		log.Info("Using MOCK_CLUSTER_VERSION", "version", v.String())
+		return version.OperatorVersion{Version: v}, nil
+	}
+
 	clusterVersion := &configv1.ClusterVersion{}
 	if err := c.Get(ctx, client.ObjectKey{
 		Name: OpenShiftVersionObj,
