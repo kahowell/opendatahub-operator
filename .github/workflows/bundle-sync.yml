@@ -28,6 +28,14 @@ jobs:
           repository: ${{ env.GITHUB_ORG }}/RHOAI-Build-Config
           path: target_repo
           ref: ${{ github.ref_name }}  # Use the same branch name as in the event
+      
+      # khowell-debug
+      - name: debug
+        run: |
+          mkdir -p target_repo/to-be-processed/bundle
+          echo foobar > target_repo/to-be-processed/bundle/test
+          cd target_repo
+          git diff
 
       # khowell-addition
       - name: Generate bundle files
