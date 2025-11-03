@@ -48,12 +48,12 @@ jobs:
         id: bundle-change-check
         run: |
           cd target_repo
+          git diff
           if [ -z "$(git diff | grep -P '^[-+]' | grep -v createdAt | grep -v -P '^(\+\+\+|---)')" ]; then
             echo "bundle_changes=empty" >> $GITHUB_OUTPUT
           else
             echo "bundle_changes=present" >> $GITHUB_OUTPUT
           fi
-
 
       - name: Commit and push the changes to release branch
         uses: actions-js/push@master
