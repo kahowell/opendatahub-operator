@@ -58,7 +58,7 @@ jobs:
 
       - name: Commit and push the changes to release branch
         uses: actions-js/push@master
-        if: ${{ steps.bundle-change-check.outputs.bundle_changes == "present" }}
+        if: ${{ steps.bundle-change-check.outputs.bundle_changes == 'present' }}
         with:
           github_token: ${{ steps.app-token.outputs.token }}
           branch: ${{ github.ref_name }}
