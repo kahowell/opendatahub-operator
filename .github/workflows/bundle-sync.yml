@@ -29,14 +29,6 @@ jobs:
           path: target_repo
           ref: ${{ github.ref_name }}  # Use the same branch name as in the event
       
-      # khowell-debug
-      - name: debug
-        run: |
-          mkdir -p target_repo/to-be-processed/bundle
-          echo foobar > target_repo/to-be-processed/bundle/test
-          cd target_repo
-          git diff
-
       # khowell-addition
       - name: Generate bundle files
         run: |
@@ -47,9 +39,8 @@ jobs:
         run: |
           mkdir -p target_repo/to-be-processed/bundle
           echo "Updating bundle related files"
-          ls source_repo/bundle/*
+          rm -rf target_repo/to-be-processed/bundle/*
           cp -r source_repo/bundle/* target_repo/to-be-processed/bundle
-          ls target_repo/to-be-processed/bundle/*
 #          echo "Updating Dockerfile"
 #          cp source_repo/Dockerfiles/bundle.Dockerfile target_repo/to-be-processed/bundle/Dockerfile
 
@@ -58,7 +49,7 @@ jobs:
         id: bundle-change-check
         run: |
           cd target_repo
-          git diff
+          git add to-be-processed/bundle
           if [ -z "$(git diff | grep -P '^[-+]' | grep -v createdAt | grep -v -P '^(\+\+\+|---)')" ]; then
             echo "bundle_changes=empty" >> $GITHUB_OUTPUT
           else
