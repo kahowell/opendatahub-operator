@@ -41,6 +41,7 @@ jobs:
           echo "Updating bundle related files"
           ls source_repo/bundle/*
           cp -r source_repo/bundle/* target_repo/to-be-processed/bundle
+          ls target_repo/to-be-processed/bundle/*
 #          echo "Updating Dockerfile"
 #          cp source_repo/Dockerfiles/bundle.Dockerfile target_repo/to-be-processed/bundle/Dockerfile
 
