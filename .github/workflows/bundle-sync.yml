@@ -50,6 +50,7 @@ jobs:
         run: |
           cd target_repo
           git add to-be-processed/bundle
+          git diff
           if [ -z "$(git diff | grep -P '^[-+]' | grep -v createdAt | grep -v -P '^(\+\+\+|---)')" ]; then
             echo "bundle_changes=empty" >> $GITHUB_OUTPUT
           else
